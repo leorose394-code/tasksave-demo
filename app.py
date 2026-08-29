@@ -1,500 +1,522 @@
-import os
-import sqlite3
-from datetime import datetime
-from flask import (
-    Flask,
-    request,
-    redirect,
-    url_for,
-    session,
-    render_template_string,
-    flash
-)
+from flask import Flask, request, redirect, url_for, session, render_template_string
 from werkzeug.utils import secure_filename
+from datetime import datetime
+import os
 
 app = Flask(__name__)
+app.secret_key = "CHANGE_THIS_DEMO_SECRET"
 
-app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key")
-
-# Render provides the port through the PORT environment variable.
-PORT = int(os.environ.get("PORT", "5000"))
-
-DATABASE = "tasksave.db"
-UPLOAD_FOLDER = "uploads"
-
+UPLOAD_FOLDER = "receipts"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "pdf"}
+# DEMO PAYMENT DETAILS —  USE REAL PAYMENTS
+DEMO_BANK = "Opay bank"
+DEMO_ACCOUNT_NUMBER = "9059426017"
+DEMO_ACCOUNT_NAME = "Babatunde rashidat opeyemi"
 
+# DEMO ADMIN LOGIN
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin123"
 
-def get_db():
-    db = sqlite3.connect(DATABASE)
-    db.row_factory = sqlite3.Row
-    return db
+users = {}
+payments = []
+withdrawals = []
 
+payment_counter = 1
+withdrawal_counter = 1
 
-def init_db():
-    db = get_db()
-
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            amount REAL NOT NULL,
-            receipt TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS withdrawals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            amount REAL NOT NULL,
-            account_name TEXT,
-            account_number TEXT,
-            bank TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    db.commit()
-    db.close()
-
-
-def allowed_file(filename):
-    return (
-        "." in filename
-        and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-    )
-
-
-def admin_required():
-    return session.get("admin") is True
-
+TASKS = [
+    {"id": 1, "title": "Task 1", "description": "Read today's learning tip.", "reward": 100},
+    {"id": 2, "title": "Task 2", "description": "Answer a practice question.", "reward": 100},
+    {"id": 3, "title": "Task 3", "description": "Check your progress.", "reward": 100},
+]
 
 PAGE = """
-<!doctype html>
+<!DOCTYPE html>
 <html>
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>TaskSave Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TaskSave Demo</title>
 
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            background: #f4f6f8;
-            color: #222;
-        }
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #f2f5f9;
+    margin: 0;
+    padding: 20px;
+}
 
-        header {
-            background: #111827;
-            color: white;
-            padding: 18px;
-        }
+.card {
+    max-width: 600px;
+    margin: 25px auto;
+    background: white;
+    padding: 25px;
+    border-radius: 18px;
+    box-shadow: 0 4px 15px #0002;
+}
 
-        main {
-            max-width: 900px;
-            margin: 25px auto;
-            padding: 15px;
-        }
+h1 {
+    text-align: center;
+}
 
-        .card {
-            background: white;
-            padding: 20px;
-            margin-bottom: 18px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0,0,0,.08);
-        }
+input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 13px;
+    margin: 7px 0;
+    border: 1px solid #ddd;
+    border-radius: 9px;
+    font-size: 15px;
+}
 
-        input, select, button {
-            width: 100%;
-            box-sizing: border-box;
-            padding: 12px;
-            margin: 7px 0;
-            border-radius: 7px;
-            border: 1px solid #ccc;
-        }
+button {
+    width: 100%;
+    padding: 13px;
+    margin-top: 8px;
+    border: 0;
+    border-radius: 9px;
+    background: #2563eb;
+    color: white;
+    font-size: 16px;
+}
 
-        button {
-            background: #111827;
-            color: white;
-            border: none;
-            cursor: pointer;
-        }
+.success {
+    background: #16a34a;
+}
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            overflow-x: auto;
-        }
+.danger {
+    background: #dc2626;
+}
 
-        th, td {
-            padding: 10px;
-            border-bottom: 1px solid #ddd;
-            text-align: left;
-        }
+.box {
+    background: #f2f5f9;
+    padding: 15px;
+    border-radius: 12px;
+    margin: 15px 0;
+}
 
-        .pending {
-            color: #b45309;
-        }
+.balance {
+    font-size: 34px;
+    font-weight: bold;
+    text-align: center;
+}
 
-        .approved {
-            color: #15803d;
-        }
+.status {
+    padding: 9px;
+    border-radius: 8px;
+    font-weight: bold;
+    text-align: center;
+}
 
-        .rejected {
-            color: #dc2626;
-        }
+.pending {
+    background: #fff3cd;
+}
 
-        a {
-            color: #2563eb;
-        }
+.verified,
+.approved {
+    background: #d1fae5;
+}
 
-        .notice {
-            padding: 12px;
-            background: #fff7ed;
-            border-radius: 8px;
-            margin-bottom: 15px;
-        }
-    </style>
+.rejected {
+    background: #fee2e2;
+}
+
+.error {
+    color: #c00;
+}
+
+.small {
+    text-align: center;
+    color: #777;
+    font-size: 13px;
+}
+
+a {
+    color: #2563eb;
+}
+</style>
 </head>
 
 <body>
-
-<header>
-    <strong>TaskSave Demo</strong>
-</header>
-
-<main>
-
-{% with messages = get_flashed_messages() %}
-    {% if messages %}
-        {% for message in messages %}
-            <div class="notice">{{ message }}</div>
-        {% endfor %}
-    {% endif %}
-{% endwith %}
-
-
-{% if page == "home" %}
-
 <div class="card">
-    <h2>TaskSave</h2>
-    <p>This is a demonstration of a payment and withdrawal workflow.</p>
-    <p><strong>Demo only:</strong> no real money is processed by this application.</p>
+
+{% if page == "login" %}
+
+<h1>TaskSave 💰</h1>
+<p class="small">DEMO ONLY — real money only.</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="POST">
+<input name="username" placeholder="Username" required>
+<input type="password" name="password" placeholder="Password" required>
+<button>Login</button>
+</form>
+
+<p style="text-align:center">
+<a href="/register">Create demo account</a>
+</p>
+
+{% elif page == "register" %}
+
+<h1>Create Demo Account</h1>
+<p class="small">DEMO ONLY — No real money only.</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="POST">
+<input name="username" placeholder="Choose username" required>
+<input type="password" name="password" placeholder="Choose password" required>
+<button>Create Account</button>
+</form>
+
+<p style="text-align:center">
+<a href="/login">Back to login</a>
+</p>
+
+{% elif page == "dashboard" %}
+
+<h1>TaskSave 💰</h1>
+
+<p>Welcome, <b>{{ username }}</b> 👋</p>
+
+<div class="box">
+<p>Virtual balance</p>
+<div class="balance">₦{{ balance }}</div>
 </div>
 
-<div class="card">
-    <h3>Submit Payment Receipt</h3>
+<h2>Demo Payment</h2>
 
-    <form method="POST"
-          action="{{ url_for('submit_payment') }}"
-          enctype="multipart/form-data">
-
-        <input
-            type="text"
-            name="username"
-            placeholder="Username"
-            required
-        >
-
-        <input
-            type="number"
-            name="amount"
-            step="0.01"
-            min="0"
-            placeholder="Amount"
-            required
-        >
-
-        <input
-            type="file"
-            name="receipt"
-            accept=".png,.jpg,.jpeg,.webp,.pdf"
-            required
-        >
-
-        <button type="submit">
-            Submit Receipt
-        </button>
-
-    </form>
+<div class="box">
+<b>Payment details</b>
+<p>Bank: {{ bank }}</p>
+<p>Account Number: {{ account }}</p>
+<p>Account Name: {{ account_name }}</p>
 </div>
 
-<div class="card">
-    <h3>Request Withdrawal</h3>
+<p class="small">
+DEMO ONLY. send real money to these details.
+</p>
 
-    <form method="POST"
-          action="{{ url_for('request_withdrawal') }}">
+<form method="POST" action="/submit-payment" enctype="multipart/form-data">
+<input
+    type="number"
+    name="amount"
+    min="1"
+    placeholder="Demo amount"
+    required
+>
 
-        <input
-            type="text"
-            name="username"
-            placeholder="Username"
-            required
-        >
+<input
+    type="file"
+    name="receipt"
+    accept="image/*"
+    required
+>
 
-        <input
-            type="number"
-            name="amount"
-            step="0.01"
-            min="0"
-            placeholder="Withdrawal amount"
-            required
-        >
+<button>Submit Receipt for Review</button>
+</form>
 
-        <input
-            type="text"
-            name="account_name"
-            placeholder="Account name"
-            required
-        >
+<h2>My Payments</h2>
 
-        <input
-            type="text"
-            name="account_number"
-            placeholder="Account number"
-            required
-        >
+{% for p in payments %}
 
-        <input
-            type="text"
-            name="bank"
-            placeholder="Bank"
-            required
-        >
+<div class="box">
+<b>₦{{ p.amount }}</b>
+<p>{{ p.date }}</p>
 
-        <button type="submit">
-            Submit Withdrawal Request
-        </button>
-
-    </form>
+<div class="status
+{% if p.status == 'PENDING' %}
+pending
+{% elif p.status == 'VERIFIED' %}
+verified
+{% else %}
+rejected
+{% endif %}
+">
+{{ p.status }}
 </div>
 
-<div class="card">
-    <a href="{{ url_for('admin_login') }}">
-        Admin Login
-    </a>
+{% if p.status == "REJECTED" %}
+<p>Reason: {{ p.reason }}</p>
+{% endif %}
 </div>
 
+{% else %}
 
-{% elif page == "admin_login" %}
+<p>No payment submissions yet.</p>
 
-<div class="card">
+{% endfor %}
 
-    <h2>Admin Login</h2>
+<hr>
 
-    <form method="POST">
+<h2>Withdraw Virtual Balance 💸</h2>
 
-        <input
-            type="text"
-            name="username"
-            placeholder="Admin username"
-            required
-        >
+<p class="small">
+Demo withdrawal only.  real bank transfer only.
+</p>
 
-        <input
-            type="password"
-            name="password"
-            placeholder="Admin password"
-            required
-        >
+<form method="POST" action="/withdraw">
 
-        <button type="submit">
-            Login
-        </button>
+<input
+    type="number"
+    name="amount"
+    min="1"
+    placeholder="Withdrawal amount"
+    required
+>
 
-    </form>
+<input
+    name="bank_name"
+    placeholder="Bank name"
+    required
+>
 
+<input
+    name="account_number"
+    placeholder="Account number"
+    required
+>
+
+<input
+    name="account_name"
+    placeholder="Account name"
+    required
+>
+
+<button>Request Withdrawal</button>
+
+</form>
+
+<h2>My Withdrawals</h2>
+
+{% for w in withdrawals %}
+
+<div class="box">
+
+<b>₦{{ w.amount }}</b>
+
+<p>Bank: {{ w.bank_name }}</p>
+<p>Account: {{ w.account_number }}</p>
+<p>Name: {{ w.account_name }}</p>
+<p>{{ w.date }}</p>
+
+<div class="status
+{% if w.status == 'PENDING' %}
+pending
+{% elif w.status == 'APPROVED' %}
+approved
+{% else %}
+rejected
+{% endif %}
+">
+{{ w.status }}
 </div>
 
-
-{% elif page == "admin" %}
-
-<div class="card">
-
-    <h2>Admin Dashboard</h2>
-
-    <p>
-        <a href="{{ url_for('admin_logout') }}">
-            Logout
-        </a>
-    </p>
-
-</div>
-
-
-<div class="card">
-
-    <h3>Payment Receipts</h3>
-
-    {% if payments %}
-
-    <table>
-
-        <tr>
-            <th>User</th>
-            <th>Amount</th>
-            <th>Status</th>
-            <th>Receipt</th>
-            <th>Action</th>
-        </tr>
-
-        {% for payment in payments %}
-
-        <tr>
-
-            <td>{{ payment["username"] }}</td>
-
-            <td>{{ payment["amount"] }}</td>
-
-            <td class="{{ payment['status'] }}">
-                {{ payment["status"] }}
-            </td>
-
-            <td>
-                {% if payment["receipt"] %}
-                    <a href="{{ url_for('receipt', filename=payment['receipt']) }}"
-                       target="_blank">
-                        View
-                    </a>
-                {% endif %}
-            </td>
-
-            <td>
-
-                <form method="POST"
-                      action="{{ url_for('payment_action', payment_id=payment['id']) }}">
-
-                    <select name="status">
-
-                        <option value="pending"
-                            {% if payment["status"] == "pending" %}selected{% endif %}>
-                            Pending
-                        </option>
-
-                        <option value="approved"
-                            {% if payment["status"] == "approved" %}selected{% endif %}>
-                            Approved
-                        </option>
-
-                        <option value="rejected"
-                            {% if payment["status"] == "rejected" %}selected{% endif %}>
-                            Rejected
-                        </option>
-
-                    </select>
-
-                    <button type="submit">
-                        Update
-                    </button>
-
-                </form>
-
-            </td>
-
-        </tr>
-
-        {% endfor %}
-
-    </table>
-
-    {% else %}
-
-    <p>No payment receipts yet.</p>
-
-    {% endif %}
+{% if w.status == "REJECTED" %}
+<p>Reason: {{ w.reason }}</p>
+{% endif %}
 
 </div>
 
+{% else %}
 
-<div class="card">
+<p>No withdrawal requests yet.</p>
 
-    <h3>Withdrawal Requests</h3>
+{% endfor %}
 
-    {% if withdrawals %}
+<hr>
 
-    <table>
+<h2>Tasks 📋</h2>
 
-        <tr>
-            <th>User</th>
-            <th>Amount</th>
-            <th>Bank</th>
-            <th>Status</th>
-            <th>Action</th>
-        </tr>
+{% for task in tasks %}
 
-        {% for withdrawal in withdrawals %}
+<div class="box">
 
-        <tr>
+<h3>{{ task.title }}</h3>
 
-            <td>{{ withdrawal["username"] }}</td>
+<p>{{ task.description }}</p>
 
-            <td>{{ withdrawal["amount"] }}</td>
+{% if task.id in completed %}
 
-            <td>{{ withdrawal["bank"] }}</td>
-
-            <td class="{{ withdrawal['status'] }}">
-                {{ withdrawal["status"] }}
-            </td>
-
-            <td>
-
-                <form method="POST"
-                      action="{{ url_for('withdrawal_action', withdrawal_id=withdrawal['id']) }}">
-
-                    <select name="status">
-
-                        <option value="pending"
-                            {% if withdrawal["status"] == "pending" %}selected{% endif %}>
-                            Pending
-                        </option>
-
-                        <option value="approved"
-                            {% if withdrawal["status"] == "approved" %}selected{% endif %}>
-                            Approved
-                        </option>
-
-                        <option value="rejected"
-                            {% if withdrawal["status"] == "rejected" %}selected{% endif %}>
-                            Rejected
-                        </option>
-
-                    </select>
-
-                    <button type="submit">
-                        Update
-                    </button>
-
-                </form>
-
-            </td>
-
-        </tr>
-
-        {% endfor %}
-
-    </table>
-
-    {% else %}
-
-    <p>No withdrawal requests yet.</p>
-
-    {% endif %}
-
+<div class="status verified">
+Completed ✅ +₦{{ task.reward }}
 </div>
+
+{% else %}
+
+<form method="POST" action="/complete-task/{{ task.id }}">
+<button>Complete Task</button>
+</form>
 
 {% endif %}
 
-</main>
+</div>
 
+{% endfor %}
+
+<p style="text-align:center">
+<a href="/logout">Logout</a>
+</p>
+
+{% elif page == "admin_login" %}
+
+<h1>Admin Login 🔐</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="POST">
+
+<input
+    name="username"
+    placeholder="Admin username"
+    required
+>
+
+<input
+    type="password"
+    name="password"
+    placeholder="Admin password"
+    required
+>
+
+<button>Admin Login</button>
+
+</form>
+
+<p class="small">
+Demo admin area.
+</p>
+
+{% elif page == "admin" %}
+
+<h1>Admin Dashboard 🔐</h1>
+
+<h2>Payment Submissions</h2>
+
+{% for p in payments %}
+
+<div class="box">
+
+<h3>Payment #{{ p.id }}</h3>
+
+<p>User: <b>{{ p.username }}</b></p>
+<p>Amount: <b>₦{{ p.amount }}</b></p>
+<p>Date: {{ p.date }}</p>
+
+<div class="status
+{% if p.status == 'PENDING' %}
+pending
+{% elif p.status == 'VERIFIED' %}
+verified
+{% else %}
+rejected
+{% endif %}
+">
+{{ p.status }}
+</div>
+
+{% if p.receipt %}
+<p>
+<a href="/receipt/{{ p.id }}" target="_blank">
+View receipt
+</a>
+</p>
+{% endif %}
+
+{% if p.status == "PENDING" %}
+
+<form method="POST" action="/verify/{{ p.id }}">
+<button class="success">
+Verify Payment
+</button>
+</form>
+
+<form method="POST" action="/reject/{{ p.id }}">
+<button class="danger">
+Reject Payment
+</button>
+</form>
+
+{% endif %}
+
+</div>
+
+{% else %}
+
+<p>No payment submissions.</p>
+
+{% endfor %}
+
+<hr>
+
+<h2>Withdrawal Requests 💸</h2>
+
+{% for w in withdrawals %}
+
+<div class="box">
+
+<h3>Withdrawal #{{ w.id }}</h3>
+
+<p>User: <b>{{ w.username }}</b></p>
+<p>Amount: <b>₦{{ w.amount }}</b></p>
+
+<p>Bank: {{ w.bank_name }}</p>
+<p>Account: {{ w.account_number }}</p>
+<p>Name: {{ w.account_name }}</p>
+
+<p>Date: {{ w.date }}</p>
+
+<div class="status
+{% if w.status == 'PENDING' %}
+pending
+{% elif w.status == 'APPROVED' %}
+approved
+{% else %}
+rejected
+{% endif %}
+">
+{{ w.status }}
+</div>
+
+{% if w.status == "PENDING" %}
+
+<form method="POST" action="/approve-withdrawal/{{ w.id }}">
+<button class="success">
+Approve Withdrawal
+</button>
+</form>
+
+<form method="POST" action="/reject-withdrawal/{{ w.id }}">
+<button class="danger">
+Reject Withdrawal
+</button>
+</form>
+
+{% endif %}
+
+</div>
+
+{% else %}
+
+<p>No withdrawal requests.</p>
+
+{% endfor %}
+
+<p style="text-align:center">
+<a href="/admin/logout">Admin Logout</a>
+</p>
+
+{% endif %}
+
+</div>
 </body>
 </html>
 """
@@ -502,216 +524,246 @@ PAGE = """
 
 @app.route("/")
 def home():
-    return render_template_string(PAGE, page="home")
+    if "username" in session:
+        return redirect(url_for("dashboard"))
+
+    return redirect(url_for("login"))
 
 
-@app.route("/payment", methods=["POST"])
+@app.route("/register", methods=["GET", "POST"])
+def register():
+
+    if request.method == "POST":
+
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        if username in users:
+            return render_template_string(
+                PAGE,
+                page="register",
+                error="Username already exists."
+            )
+
+        if len(username) < 3 or len(password) < 4:
+            return render_template_string(
+                PAGE,
+                page="register",
+                error="Username must be 3+ characters and password 4+ characters."
+            )
+
+        users[username] = {
+            "password": password,
+            "balance": 3000,
+            "completed": []
+        }
+
+        session["username"] = username
+
+        return redirect(url_for("dashboard"))
+
+    return render_template_string(
+        PAGE,
+        page="register",
+        error=""
+    )
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+
+    if request.method == "POST":
+
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        user = users.get(username)
+
+        if user and user["password"] == password:
+
+            session["username"] = username
+
+            return redirect(url_for("dashboard"))
+
+        return render_template_string(
+            PAGE,
+            page="login",
+            error="Incorrect username or password."
+        )
+
+    return render_template_string(
+        PAGE,
+        page="login",
+        error=""
+    )
+
+
+@app.route("/dashboard")
+def dashboard():
+
+    username = session.get("username")
+
+    if not username or username not in users:
+        return redirect(url_for("login"))
+
+    user_payments = [
+        p for p in payments
+        if p["username"] == username
+    ]
+
+    user_withdrawals = [
+        w for w in withdrawals
+        if w["username"] == username
+    ]
+
+    return render_template_string(
+        PAGE,
+        page="dashboard",
+        username=username,
+        balance=users[username]["balance"],
+        tasks=TASKS,
+        completed=users[username]["completed"],
+        payments=user_payments,
+        withdrawals=user_withdrawals,
+        bank=DEMO_BANK,
+        account=DEMO_ACCOUNT_NUMBER,
+        account_name=DEMO_ACCOUNT_NAME
+    )
+
+
+@app.route("/submit-payment", methods=["POST"])
 def submit_payment():
 
-    username = request.form.get("username", "").strip()
-    amount = request.form.get("amount", "").strip()
-    receipt_file = request.files.get("receipt")
+    global payment_counter
 
-    if not username or not amount or not receipt_file:
-        flash("Please complete all payment fields.")
-        return redirect(url_for("home"))
+    username = session.get("username")
 
-    try:
-        amount_value = float(amount)
-    except ValueError:
-        flash("Invalid amount.")
-        return redirect(url_for("home"))
+    if not username:
+        return redirect(url_for("login"))
 
-    if amount_value <= 0:
-        flash("Amount must be greater than zero.")
-        return redirect(url_for("home"))
+    amount = request.form.get("amount")
+    receipt = request.files.get("receipt")
 
-    if receipt_file.filename == "":
-        flash("Please select a receipt.")
-        return redirect(url_for("home"))
-
-    if not allowed_file(receipt_file.filename):
-        flash("Unsupported receipt file type.")
-        return redirect(url_for("home"))
-
-    filename = secure_filename(receipt_file.filename)
-
-    unique_name = (
-        datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
-        + "_"
-        + filename
-    )
-
-    receipt_file.save(
-        os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
-    )
-
-    db = get_db()
-
-    db.execute(
-        """
-        INSERT INTO payments
-        (username, amount, receipt, status, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (
-            username,
-            amount_value,
-            unique_name,
-            "pending",
-            datetime.utcnow().isoformat()
-        )
-    )
-
-    db.commit()
-    db.close()
-
-    flash("Receipt submitted successfully. It is awaiting admin review.")
-
-    return redirect(url_for("home"))
-
-
-@app.route("/withdraw", methods=["POST"])
-def request_withdrawal():
-
-    username = request.form.get("username", "").strip()
-    amount = request.form.get("amount", "").strip()
-    account_name = request.form.get("account_name", "").strip()
-    account_number = request.form.get("account_number", "").strip()
-    bank = request.form.get("bank", "").strip()
-
-    if not all([
-        username,
-        amount,
-        account_name,
-        account_number,
-        bank
-    ]):
-        flash("Please complete all withdrawal fields.")
-        return redirect(url_for("home"))
+    if not amount or not receipt:
+        return redirect(url_for("dashboard"))
 
     try:
-        amount_value = float(amount)
+        amount = float(amount)
     except ValueError:
-        flash("Invalid withdrawal amount.")
-        return redirect(url_for("home"))
+        return redirect(url_for("dashboard"))
 
-    if amount_value <= 0:
-        flash("Withdrawal amount must be greater than zero.")
-        return redirect(url_for("home"))
+    filename = secure_filename(receipt.filename)
 
-    db = get_db()
+    if not filename:
+        return redirect(url_for("dashboard"))
 
-    db.execute(
-        """
-        INSERT INTO withdrawals
-        (
-            username,
-            amount,
-            account_name,
-            account_number,
-            bank,
-            status,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            username,
-            amount_value,
-            account_name,
-            account_number,
-            bank,
-            "pending",
-            datetime.utcnow().isoformat()
-        )
-    )
+    filename = f"{payment_counter}_{username}_{filename}"
 
-    db.commit()
-    db.close()
-
-    flash("Withdrawal request submitted for review.")
-
-    return redirect(url_for("home"))
-
-
-@app.route("/receipt/<path:filename>")
-def receipt(filename):
-
-    from flask import send_from_directory
-
-    if not admin_required():
-        return "Unauthorized", 401
-
-    return send_from_directory(
+    filepath = os.path.join(
         app.config["UPLOAD_FOLDER"],
         filename
     )
+
+    receipt.save(filepath)
+
+    payments.append({
+        "id": payment_counter,
+        "username": username,
+        "amount": amount,
+        "receipt": filename,
+        "status": "PENDING",
+        "reason": "",
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+    })
+
+    payment_counter += 1
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/withdraw", methods=["POST"])
+def withdraw():
+
+    global withdrawal_counter
+
+    username = session.get("username")
+
+    if not username or username not in users:
+        return redirect(url_for("login"))
+
+    try:
+        amount = float(request.form.get("amount", "0"))
+    except ValueError:
+        return redirect(url_for("dashboard"))
+
+    bank_name = request.form.get("bank_name", "").strip()
+    account_number = request.form.get("account_number", "").strip()
+    account_name = request.form.get("account_name", "").strip()
+
+    user = users[username]
+
+    if amount <= 0:
+        return redirect(url_for("dashboard"))
+
+    if amount > user["balance"]:
+        return redirect(url_for("dashboard"))
+
+    if not bank_name or not account_number or not account_name:
+        return redirect(url_for("dashboard"))
+
+    # Reserve the amount while the request is pending.
+    user["balance"] -= amount
+
+    withdrawals.append({
+        "id": withdrawal_counter,
+        "username": username,
+        "amount": amount,
+        "bank_name": bank_name,
+        "account_number": account_number,
+        "account_name": account_name,
+        "status": "PENDING",
+        "reason": "",
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+    })
+
+    withdrawal_counter += 1
+
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin_login():
 
-    if admin_required():
+    if session.get("admin"):
         return redirect(url_for("admin_dashboard"))
+
+    error = ""
 
     if request.method == "POST":
 
-        username = request.form.get("username", "")
-        password = request.form.get("password", "")
+        username = request.form.get("username")
+        password = request.form.get("password")
 
-        admin_username = os.environ.get(
-            "ADMIN_USERNAME",
-            "admin"
-        )
-
-        admin_password = os.environ.get(
-            "ADMIN_PASSWORD",
-            "change-me"
-        )
-
-        if (
-            username == admin_username
-            and password == admin_password
-        ):
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
 
             session["admin"] = True
 
             return redirect(url_for("admin_dashboard"))
 
-        flash("Incorrect admin username or password.")
+        error = "Incorrect admin username or password."
 
     return render_template_string(
         PAGE,
-        page="admin_login"
+        page="admin_login",
+        error=error
     )
 
 
 @app.route("/admin/dashboard")
 def admin_dashboard():
 
-    if not admin_required():
+    if not session.get("admin"):
         return redirect(url_for("admin_login"))
-
-    db = get_db()
-
-    payments = db.execute(
-        """
-        SELECT *
-        FROM payments
-        ORDER BY id DESC
-        """
-    ).fetchall()
-
-    withdrawals = db.execute(
-        """
-        SELECT *
-        FROM withdrawals
-        ORDER BY id DESC
-        """
-    ).fetchall()
-
-    db.close()
 
     return render_template_string(
         PAGE,
@@ -721,74 +773,149 @@ def admin_dashboard():
     )
 
 
-@app.route("/admin/payment/<int:payment_id>", methods=["POST"])
-def payment_action(payment_id):
+@app.route("/verify/<int:payment_id>", methods=["POST"])
+def verify(payment_id):
 
-    if not admin_required():
-        return "Unauthorized", 401
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
 
-    status = request.form.get("status")
+    for payment in payments:
 
-    if status not in {
-        "pending",
-        "approved",
-        "rejected"
-    }:
-        flash("Invalid payment status.")
-        return redirect(url_for("admin_dashboard"))
+        if payment["id"] == payment_id:
 
-    db = get_db()
+            if payment["status"] == "PENDING":
 
-    db.execute(
-        """
-        UPDATE payments
-        SET status = ?
-        WHERE id = ?
-        """,
-        (status, payment_id)
-    )
+                payment["status"] = "VERIFIED"
 
-    db.commit()
-    db.close()
+                username = payment["username"]
 
-    flash("Payment status updated.")
+                if username in users:
+                    users[username]["balance"] += payment["amount"]
+
+            break
 
     return redirect(url_for("admin_dashboard"))
 
 
-@app.route("/admin/withdrawal/<int:withdrawal_id>", methods=["POST"])
-def withdrawal_action(withdrawal_id):
+@app.route("/reject/<int:payment_id>", methods=["POST"])
+def reject(payment_id):
 
-    if not admin_required():
-        return "Unauthorized", 401
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
 
-    status = request.form.get("status")
+    for payment in payments:
 
-    if status not in {
-        "pending",
-        "approved",
-        "rejected"
-    }:
-        flash("Invalid withdrawal status.")
-        return redirect(url_for("admin_dashboard"))
+        if payment["id"] == payment_id:
 
-    db = get_db()
+            if payment["status"] == "PENDING":
 
-    db.execute(
-        """
-        UPDATE withdrawals
-        SET status = ?
-        WHERE id = ?
-        """,
-        (status, withdrawal_id)
-    )
+                payment["status"] = "REJECTED"
+                payment["reason"] = "Receipt could not be verified."
 
-    db.commit()
-    db.close()
-
-    flash("Withdrawal status updated.")
+            break
 
     return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/receipt/<int:payment_id>")
+def receipt(payment_id):
+
+    if not session.get("admin"):
+        return "Unauthorized", 403
+
+    for payment in payments:
+
+        if payment["id"] == payment_id:
+
+            filepath = os.path.join(
+                app.config["UPLOAD_FOLDER"],
+                payment["receipt"]
+            )
+
+            if os.path.exists(filepath):
+
+                from flask import send_file
+
+                return send_file(filepath)
+
+    return "Receipt not found", 404
+
+
+@app.route("/approve-withdrawal/<int:withdrawal_id>", methods=["POST"])
+def approve_withdrawal(withdrawal_id):
+
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
+
+    for withdrawal in withdrawals:
+
+        if withdrawal["id"] == withdrawal_id:
+
+            if withdrawal["status"] == "PENDING":
+
+                withdrawal["status"] = "APPROVED"
+
+            break
+
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/reject-withdrawal/<int:withdrawal_id>", methods=["POST"])
+def reject_withdrawal(withdrawal_id):
+
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
+
+    for withdrawal in withdrawals:
+
+        if withdrawal["id"] == withdrawal_id:
+
+            if withdrawal["status"] == "PENDING":
+
+                withdrawal["status"] = "REJECTED"
+                withdrawal["reason"] = "Withdrawal request rejected."
+
+                username = withdrawal["username"]
+
+                if username in users:
+                    users[username]["balance"] += withdrawal["amount"]
+
+            break
+
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/complete-task/<int:task_id>", methods=["POST"])
+def complete_task(task_id):
+
+    username = session.get("username")
+
+    if not username or username not in users:
+        return redirect(url_for("login"))
+
+    user = users[username]
+
+    if task_id not in user["completed"]:
+
+        task = next(
+            (t for t in TASKS if t["id"] == task_id),
+            None
+        )
+
+        if task:
+
+            user["completed"].append(task_id)
+            user["balance"] += task["reward"]
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/logout")
+def logout():
+
+    session.clear()
+
+    return redirect(url_for("login"))
 
 
 @app.route("/admin/logout")
@@ -799,19 +926,9 @@ def admin_logout():
     return redirect(url_for("admin_login"))
 
 
-@app.route("/logout")
-def logout():
-
-    session.clear()
-
-    return redirect(url_for("home"))
-
-
-init_db()
-
-
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
-        port=PORT
+        port=5000,
+        debug=True
     )
