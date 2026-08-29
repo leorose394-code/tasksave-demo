@@ -1256,6 +1256,34 @@ def admin_dashboard():
         Withdrawal.id.desc()
     ).all()
 
-    return render_template_string(
+        return render_template_string(
         PAGE,
-        page="
+        page="admin",
+        payments=payments,
+        withdrawals=withdrawals
+    )
+
+
+@app.route("/logout")
+def logout():
+
+    session.clear()
+
+    return redirect(url_for("login"))
+
+
+@app.route("/admin/logout")
+def admin_logout():
+
+    session.pop("admin", None)
+
+    return redirect(url_for("admin_login"))
+
+
+if __name__ == "__main__":
+
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True
+    )
