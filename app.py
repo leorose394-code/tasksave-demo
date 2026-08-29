@@ -144,7 +144,7 @@ a {
 {% if page == "login" %}
 
 <h1>TaskSave 💰</h1>
-<p class="small">DEMO ONLY — No real money is involved.</p>
+<p class="small">DEMO ONLY — real money only .</p>
 
 {% if error %}
 <p class="error">{{ error }}</p>
@@ -163,7 +163,7 @@ a {
 {% elif page == "register" %}
 
 <h1>Create Demo Account</h1>
-<p class="small">DEMO ONLY — No real money is involved.</p>
+<p class="small">DEMO ONLY — real money only.</p>
 
 {% if error %}
 <p class="error">{{ error }}</p>
@@ -200,7 +200,7 @@ a {
 </div>
 
 <p class="small">
-DEMO ONLY. Do not send real money to these details.
+DEMO ONLY.send real money to these details.
 </p>
 
 <form method="POST" action="/submit-payment" enctype="multipart/form-data">
