@@ -1264,26 +1264,22 @@ def admin_dashboard():
     )
 
 
-@app.route("/logout")
-def logout():
+@app.route("/admin/dashboard")
+def admin_dashboard():
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
 
-    session.clear()
+    payments = Payment.query.order_by(
+        Payment.id.desc()
+    ).all()
 
-    return redirect(url_for("login"))
+    withdrawals = Withdrawal.query.order_by(
+        Withdrawal.id.desc()
+    ).all()
 
-
-@app.route("/admin/logout")
-def admin_logout():
-
-    session.pop("admin", None)
-
-    return redirect(url_for("admin_login"))
-
-
-if __name__ == "__main__":
-
-    app.run(
-        host="0.0.0.0",
-        port=5000,
-        debug=True
+    return render_template_string(
+        PAGE,
+        page="admin",
+        payments=payments,
+        withdrawals=withdrawals
     )
